@@ -78,11 +78,15 @@ Then open http://localhost:8000, pick `trading_agent`, and ask something like "A
 python main.py backtest --tickers AAPL MSFT NVDA JPM XOM --start 2025-01-01 --end 2025-12-31 --every 20 --horizon 20
 ```
 
-Results are written to `results/predictions.csv` and `results/report.md`. On Gemini's free tier, add `--delay 10` to stay under rate limits. To see the baselines without calling the LLM:
+Results are written to `results/predictions.csv` and `results/report.md`. To see the baselines without calling the LLM:
 
 ```bash
 python main.py backtest --baseline-only
 ```
+
+### Rate limits
+
+One analysis makes about 7 model calls (three analysts in parallel, each calling the model twice, plus the portfolio manager). Gemini's free tier allows 5 requests per minute per model, so every agent waits on a shared client-side limiter (`GEMINI_REQUESTS_PER_MINUTE`, default 5) and 429 errors are retried with exponential backoff. On the free tier a single analysis takes a few minutes; the free tier also has a daily request cap, so long backtests may need to be spread over several days (they resume where they left off). On a paid tier, raise the limit in `.env`.
 
 ## Configuration
 
@@ -90,6 +94,7 @@ python main.py backtest --baseline-only
 |---|---|---|
 | `GOOGLE_API_KEY` | (required) | Gemini API key |
 | `TRADING_AGENT_MODEL` | `gemini-3.5-flash` | Model used by every agent |
+| `GEMINI_REQUESTS_PER_MINUTE` | `5` | Shared cap on model calls per minute across all agents (0 = no limit) |
 
 ## Tests
 

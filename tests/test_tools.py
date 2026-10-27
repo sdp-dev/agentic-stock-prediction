@@ -52,3 +52,25 @@ def test_market_context(fake_market):
     result = tools.get_market_context(ctx(as_of="2023-06-01"))
     assert result["status"] == "ok"
     assert pd.Timestamp(result["as_of"]) <= pd.Timestamp("2023-06-01")
+
+
+def test_rate_limiter_waits_once_the_window_is_full(monkeypatch):
+    import asyncio
+
+    from trading_agent import rate_limit
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        limiter._sent.popleft()  # simulate the oldest request ageing out of the window
+
+    monkeypatch.setattr(rate_limit.asyncio, "sleep", fake_sleep)
+    limiter = rate_limit.RateLimiter(requests_per_minute=2)
+
+    async def three_calls():
+        for _ in range(3):
+            await limiter.acquire()
+
+    asyncio.run(three_calls())
+    assert len(sleeps) == 1 and 0 < sleeps[0] <= 60.1

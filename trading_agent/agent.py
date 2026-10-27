@@ -9,9 +9,12 @@ reports to the portfolio manager. `root_agent` is what `adk web` loads.
 """
 
 from google.adk.agents import LlmAgent
+from google.adk.models import Gemini
 from google.adk.workflow import START, JoinNode, Workflow
+from google.genai import types
 
 from .config import MODEL
+from .rate_limit import throttle
 from .schemas import Recommendation
 from .tools import (
     get_fundamentals,
@@ -19,6 +22,14 @@ from .tools import (
     get_price_summary,
     get_recent_news,
     get_technical_indicators,
+)
+
+# Shared by every agent: retry rate-limit and transient errors with backoff.
+GEMINI = Gemini(
+    model=MODEL,
+    retry_options=types.HttpRetryOptions(
+        attempts=5, initial_delay=10, max_delay=65, exp_base=2, http_status_codes=[429, 500, 503]
+    ),
 )
 
 REPORT_STYLE = """
@@ -31,8 +42,9 @@ Do not make up data that your tools did not return.
 
 technical_analyst = LlmAgent(
     name="technical_analyst",
-    model=MODEL,
+    model=GEMINI,
     mode="single_turn",
+    before_model_callback=throttle,
     description="Analyzes price action and technical indicators for one stock.",
     instruction=f"""You are a technical analyst. Identify the stock ticker in the user's
 request, then call get_price_summary and get_technical_indicators for it.
@@ -47,8 +59,9 @@ and stretch (Bollinger %B, distance from 52-week high). Note overbought
 
 market_analyst = LlmAgent(
     name="market_analyst",
-    model=MODEL,
+    model=GEMINI,
     mode="single_turn",
+    before_model_callback=throttle,
     description="Assesses the broad market regime.",
     instruction=f"""You are a market strategist. Call get_market_context and describe the
 market regime: is the S&P 500 in an uptrend (above its 200-day average)? Is
@@ -62,8 +75,9 @@ asked about.
 
 fundamental_analyst = LlmAgent(
     name="fundamental_analyst",
-    model=MODEL,
+    model=GEMINI,
     mode="single_turn",
+    before_model_callback=throttle,
     description="Reviews valuation, financial health, and news for one stock.",
     instruction=f"""You are a fundamental analyst. Identify the stock ticker in the user's
 request, then call get_fundamentals and get_recent_news for it.
@@ -79,8 +93,9 @@ unavailable (as in backtests), reply only with the ticker and
 
 portfolio_manager = LlmAgent(
     name="portfolio_manager",
-    model=MODEL,
+    model=GEMINI,
     mode="single_turn",
+    before_model_callback=throttle,
     description="Weighs the analyst reports and makes the final call.",
     instruction="""You are a disciplined portfolio manager deciding on one stock over the
 next {horizon_days?} trading days (assume 20 if blank). The analysis date is

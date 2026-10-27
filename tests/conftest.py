@@ -17,6 +17,13 @@ def make_prices(start="2022-01-03", days=600, drift=0.001, seed=0) -> pd.DataFra
     )
 
 
+@pytest.fixture(autouse=True)
+def no_rate_limit(monkeypatch):
+    """The scripted model is free; don't make tests wait for API rate limits."""
+    from trading_agent.rate_limit import limiter
+    monkeypatch.setattr(limiter, "requests_per_minute", 0)
+
+
 @pytest.fixture
 def fake_market(monkeypatch):
     """Patch the downloader: every ticker gets the same synthetic uptrend."""

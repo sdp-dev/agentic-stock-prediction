@@ -6,6 +6,7 @@
 
 import argparse
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -17,15 +18,35 @@ DISCLAIMER = "For research and education only. Not financial advice."
 
 
 def _require_api_key() -> None:
-    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_GENAI_USE_VERTEXAI")):
+    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
         raise SystemExit("GOOGLE_API_KEY is not set. Copy .env.example to .env and add your Gemini key.")
+
+
+def _explain_failure(error: Exception) -> str:
+    message = str(error)
+    if "RESOURCE_EXHAUSTED" in message or "429" in message:
+        return ("Gemini rate limit hit even after retrying. On the free tier this usually means the "
+                "daily request quota is used up; check https://ai.dev/rate-limit, wait, or lower "
+                "GEMINI_REQUESTS_PER_MINUTE in .env.")
+    if "API_KEY_INVALID" in message or "API key not valid" in message:
+        return "Gemini rejected the API key. Check GOOGLE_API_KEY in .env."
+    return f"{type(error).__name__}: {message.splitlines()[0][:300]}"
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
     _require_api_key()
+    from trading_agent.config import REQUESTS_PER_MINUTE
     from trading_agent.runner import analyze
 
-    result = analyze(args.ticker, as_of=args.as_of, horizon_days=args.horizon)
+    if 0 < REQUESTS_PER_MINUTE < 10:
+        print(f"Analyzing {args.ticker.upper()} (rate-limited to {REQUESTS_PER_MINUTE} requests/min, "
+              "so this takes a few minutes)...")
+    try:
+        result = analyze(args.ticker, as_of=args.as_of, horizon_days=args.horizon)
+    except Exception as e:
+        if args.debug:
+            raise
+        raise SystemExit(f"Analysis failed. {_explain_failure(e)}")
     rec = result.recommendation
 
     if args.verbose:
@@ -75,6 +96,7 @@ def main() -> None:
     analyze.add_argument("--as-of", help="Analyze as of a past date (YYYY-MM-DD)")
     analyze.add_argument("--horizon", type=int, default=20, help="Holding period in trading days")
     analyze.add_argument("-v", "--verbose", action="store_true", help="Print each analyst's report")
+    analyze.add_argument("--debug", action="store_true", help="Show full error tracebacks")
     analyze.set_defaults(func=cmd_analyze)
 
     backtest = sub.add_parser("backtest", help="Score the agent's calls on past dates")
@@ -89,6 +111,9 @@ def main() -> None:
     backtest.set_defaults(func=cmd_backtest)
 
     args = parser.parse_args()
+    if not getattr(args, "debug", False):
+        # ADK logs full tracebacks for failed model calls; the CLI reports errors itself.
+        logging.getLogger("google_adk").setLevel(logging.CRITICAL)
     args.func(args)
 
 
